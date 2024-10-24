@@ -129,7 +129,7 @@ func (s *SQS) pullMessagesRequest() *sqs.ReceiveMessageInput {
 	r := &sqs.ReceiveMessageInput{
 		MessageSystemAttributeNames: []types.MessageSystemAttributeName{types.MessageSystemAttributeNameAll},
 		MessageAttributeNames: []string{
-			string(types.MessageSystemAttributeNameSentTimestamp),
+			"All",
 		},
 		QueueUrl:            aws.String(s.config.Queue),
 		MaxNumberOfMessages: s.config.MaxNumberOfMessages,
