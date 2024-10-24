@@ -191,8 +191,11 @@ var consumeTestFunc ConsumerFn
 
 func TestSQS_Start(t *testing.T) {
 	queueUrl := "queue"
-	var actual []string
-	consumeTestFunc = func(data []byte) error {
+	var actualData []string
+	actualAttributes := make([]map[string]types.MessageAttributeValue, 0)
+	consumeTestFunc = func(data []byte, attributes map[string]types.MessageAttributeValue) error {
+		actualData = append(actualData, string(data))
+		actualAttributes = append(actualAttributes, attributes)
 		return nil
 	}
 
@@ -276,7 +279,7 @@ func TestSQS_Start(t *testing.T) {
 		//*/
 	}
 	for _, tt := range tests {
-		actual = make([]string, 0)
+		actualData = make([]string, 0)
 		t.Run(tt.name, func(t *testing.T) {
 			sqsMock := tt.fields.svc.(*SqsMock)
 			sqsMock.On("ReceiveMessage", mock.Anything, mock.AnythingOfType("*sqs.ReceiveMessageInput"),
@@ -284,7 +287,7 @@ func TestSQS_Start(t *testing.T) {
 			sqsMock.On("DeleteMessageBatch", mock.Anything, mock.AnythingOfType("*sqs.DeleteMessageBatchInput"),
 				mock.AnythingOfType("[]func(*sqs.Options)")).Return(nil, tt.wantDeleteErr)
 
-			ctx, _ := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			ctx, _ := context.WithTimeout(context.Background(), 50*time.Millisecond)
 
 			// set Env
 			setEnv("AWS_REGION", "baz", "AWS_SECRET_ACCESS_KEY", "foo", "AWS_ACCESS_KEY_ID", "bar")
@@ -298,17 +301,27 @@ func TestSQS_Start(t *testing.T) {
 			s.sqs = sqsMock
 			err = s.Start(ctx, tt.args.consumeFn)
 
-			t.Log(len(actual))
+			t.Log(len(actualData))
+			t.Log(len(actualAttributes))
 			mocked := tt.fields.svc.(*SqsMock)
 			if tt.wantReceiveErr == nil && tt.wantDeleteErr == nil {
 				assert.NotNil(t, mocked.inputs)
 				assert.NotNil(t, mocked.deleteInputs)
-				for _, msg := range actual {
+				for _, msg := range actualData {
 					assert.Contains(t, []string{
 						"msg1",
 						"msg2",
 						"msg3",
 					}, msg)
+				}
+				for _, attr := range actualAttributes {
+					for attrKey := range attr {
+						assert.Contains(t, []string{
+							"attribute1",
+							"attribute2",
+							"attribute3",
+						}, attrKey)
+					}
 				}
 			} else {
 				assert.NotNil(t, err)
@@ -323,15 +336,34 @@ func getQueueContent() *sqs.ReceiveMessageOutput {
 			{
 				MessageId: aws.String("msg1"),
 				Body:      aws.String("msg1"),
+				MessageAttributes: map[string]types.MessageAttributeValue{
+					"attribute1": {
+						DataType:    aws.String("String"),
+						StringValue: aws.String("foo"),
+					},
+				},
 			},
 			{
 				MessageId: aws.String("msg2"),
 				Body:      aws.String("msg2"),
+				MessageAttributes: map[string]types.MessageAttributeValue{
+					"attribute2": {
+						DataType:    aws.String("String"),
+						StringValue: aws.String("foo"),
+					},
+				},
 			},
 			{
 				MessageId: aws.String("msg3"),
 				Body:      aws.String("msg3"),
+				MessageAttributes: map[string]types.MessageAttributeValue{
+					"attribute3": {
+						DataType:    aws.String("String"),
+						StringValue: aws.String("foo"),
+					},
+				},
 			},
 		},
 	}
+
 }

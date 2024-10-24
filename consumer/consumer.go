@@ -106,7 +106,7 @@ func (s *SQS) handleMessages(ctx context.Context, consumeFn ConsumerFn) error {
 
 			toDelete := make([]types.Message, 0)
 			for _, msg := range result.Messages {
-				if err := consumeFn([]byte(*msg.Body)); err != nil {
+				if err := consumeFn([]byte(*msg.Body), msg.MessageAttributes); err != nil {
 					slog.Error("error in consume function", slog.Any("error", err.Error()))
 					continue
 				}

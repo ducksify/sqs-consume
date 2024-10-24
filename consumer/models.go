@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
 const (
@@ -42,4 +43,4 @@ type SQS struct {
 	sqs    SQSClient
 }
 
-type ConsumerFn func(data []byte) error
+type ConsumerFn func(data []byte, attributes map[string]types.MessageAttributeValue) error
