@@ -87,7 +87,7 @@ func (s *SQS) handleMessages(ctx context.Context, consumeFn ConsumerFn) error {
 		case <-ctx.Done():
 			return nil
 		default:
-			result, err := s.sqs.ReceiveMessage(ctx, s.pullMessagesRequest(ctx))
+			result, err := s.sqs.ReceiveMessage(ctx, s.pullMessagesRequest())
 
 			if err != nil {
 				return err
@@ -124,7 +124,7 @@ func (s *SQS) handleMessages(ctx context.Context, consumeFn ConsumerFn) error {
 	}
 }
 
-func (s *SQS) pullMessagesRequest(ctx context.Context) *sqs.ReceiveMessageInput {
+func (s *SQS) pullMessagesRequest() *sqs.ReceiveMessageInput {
 
 	r := &sqs.ReceiveMessageInput{
 		MessageSystemAttributeNames: []types.MessageSystemAttributeName{types.MessageSystemAttributeNameAll},
@@ -180,7 +180,7 @@ func chunk(rows []types.Message, chunkSize int) [][]types.Message {
 	}
 
 	if len(rows) > 0 {
-		chunks = append(chunks, rows[:len(rows)])
+		chunks = append(chunks, rows[:])
 	}
 
 	return chunks
