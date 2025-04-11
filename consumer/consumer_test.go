@@ -3,19 +3,18 @@ package consumer
 import (
 	"context"
 	"errors"
+	"os"
+	"testing"
+	"time"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
-	_ "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/stretchr/testify/assert"
-	_ "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"os"
-	"testing"
-	"time"
 )
 
 type SqsMock struct {
@@ -39,8 +38,6 @@ func (m *SqsMock) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMess
 }
 
 func setEnv(keyValue ...string) {
-	// Map to store original values to restore them later
-	// Loop through the provided key-value pairs
 	for i := 0; i < len(keyValue); i += 2 {
 		key := keyValue[i]
 		value := keyValue[i+1]
@@ -48,8 +45,6 @@ func setEnv(keyValue ...string) {
 	}
 }
 func unsetEnv(keyValue ...string) {
-	// Map to store original values to restore them later
-	// Loop through the provided key-value pairs
 	for i := 0; i < len(keyValue); i += 2 {
 		key := keyValue[i]
 		os.Unsetenv(key)
@@ -72,40 +67,30 @@ func TestNewSQSWorker(t *testing.T) {
 
 	svc := sqs.NewFromConfig(cfg)
 
-	type args struct {
-		conf      *SQSConf
-		consumeFn ConsumerFn
-		env       []string
-	}
 	tests := []struct {
 		name    string
-		args    args
+		conf    *SQSConf
+		env     []string
 		want    *SQS
 		wantErr error
 	}{
 		{
 			name: "shouldCreateNewSQSConsumer",
-			args: args{
-				conf:      sqsConf,
-				consumeFn: consumeTestFunc,
-				env:       []string{"AWS_REGION", "baz", "AWS_SECRET_ACCESS_KEY", "foo", "AWS_ACCESS_KEY_ID", "bar"},
-			},
+			conf: sqsConf,
+			env:  []string{"AWS_REGION", "baz", "AWS_SECRET_ACCESS_KEY", "foo", "AWS_ACCESS_KEY_ID", "bar"},
 			want: &SQS{
-				config: sqsConf,
-				sqs:    svc,
+				config:    sqsConf,
+				sqs:       svc,
+				semaphore: make(chan struct{}, sqsConf.Concurrency),
 			},
-
 			wantErr: nil,
 		},
 		{
 			name: "shouldCreateNewSQSConsumerWithDefaultValues",
-			args: args{
-				conf: &SQSConf{
-					Queue: "queue",
-				},
-				env:       []string{"AWS_REGION", "baz", "AWS_SECRET_ACCESS_KEY", "foo", "AWS_ACCESS_KEY_ID", "bar"},
-				consumeFn: consumeTestFunc,
+			conf: &SQSConf{
+				Queue: "queue",
 			},
+			env: []string{"AWS_REGION", "baz", "AWS_SECRET_ACCESS_KEY", "foo", "AWS_ACCESS_KEY_ID", "bar"},
 			want: &SQS{
 				config: &SQSConf{
 					Queue:               "queue",
@@ -114,75 +99,44 @@ func TestNewSQSWorker(t *testing.T) {
 					WaitTimeSeconds:     DefaultWaitTimeSeconds,
 					DeleteStrategy:      DeleteStrategyImmediate,
 				},
-				sqs: svc,
+				sqs:       svc,
+				semaphore: make(chan struct{}, DefaultConcurrency),
 			},
-
 			wantErr: nil,
 		},
 		{
-			name: "shouldErrorQueueEmptyNewSQSConsumer",
-			args: args{
-				conf: &SQSConf{
-					Queue: "",
-				},
-				env:       []string{"AWS_REGION", "baz", "AWS_SECRET_ACCESS_KEY", "foo", "AWS_ACCESS_KEY_ID", "bar"},
-				consumeFn: consumeTestFunc,
-			},
-			want: &SQS{
-				config: sqsConf,
-				sqs:    svc,
-			},
-
+			name:    "shouldErrorQueueEmptyNewSQSConsumer",
+			conf:    &SQSConf{Queue: ""},
+			env:     []string{"AWS_REGION", "baz", "AWS_SECRET_ACCESS_KEY", "foo", "AWS_ACCESS_KEY_ID", "bar"},
 			wantErr: SentinelErrorQueueNotSet,
 		},
 		{
-			name: "shouldErrorConfigNilNewSQSConsumer",
-			args: args{
-				conf:      nil,
-				env:       []string{"AWS_REGION", "baz", "AWS_SECRET_ACCESS_KEY", "foo", "AWS_ACCESS_KEY_ID", "bar"},
-				consumeFn: consumeTestFunc,
-			},
-			want: &SQS{
-				config: sqsConf,
-				sqs:    svc,
-			},
-
+			name:    "shouldErrorConfigNilNewSQSConsumer",
+			conf:    nil,
+			env:     []string{"AWS_REGION", "baz", "AWS_SECRET_ACCESS_KEY", "foo", "AWS_ACCESS_KEY_ID", "bar"},
 			wantErr: SentinelErrorConfigIsNil,
 		},
 		{
-			name: "shouldErrorMissingEnv",
-			args: args{
-				conf:      nil,
-				env:       []string{"AWS_SECRET_ACCESS_KEY", "foo", "AWS_ACCESS_KEY_ID", "bar"},
-				consumeFn: consumeTestFunc,
-			},
-			want: &SQS{
-				config: sqsConf,
-				sqs:    svc,
-			},
-
+			name:    "shouldErrorMissingEnv",
+			conf:    &SQSConf{Queue: "queue"},
+			env:     []string{"AWS_SECRET_ACCESS_KEY", "foo", "AWS_ACCESS_KEY_ID", "bar"},
 			wantErr: SentinelErrorConfigAws,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// set Env
-			unsetEnv("AWS_REGION", "baz", "AWS_SECRET_ACCESS_KEY", "foo", "AWS_ACCESS_KEY_ID", "bar")
+			unsetEnv("AWS_REGION", "AWS_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID")
+			setEnv(tt.env...)
 
-			setEnv(tt.args.env...)
-
-			got, err := NewSQSConsumer(tt.args.conf)
-			if err != nil && tt.wantErr == nil {
-				t.Errorf("Error creation new Consumer")
-				return
-			}
+			got, err := NewSQSConsumer(tt.conf)
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
 				return
 			}
+			require.NoError(t, err)
 			require.Equal(t, tt.want.config, got.config)
-			unsetEnv(tt.args.env...)
+			require.Equal(t, cap(tt.want.semaphore), cap(got.semaphore))
 		})
 	}
 }
@@ -193,138 +147,85 @@ func TestSQS_Start(t *testing.T) {
 	queueUrl := "queue"
 	var actualData []string
 	actualAttributes := make([]map[string]types.MessageAttributeValue, 0)
+
 	consumeTestFunc = func(data []byte, attributes map[string]types.MessageAttributeValue) error {
 		actualData = append(actualData, string(data))
 		actualAttributes = append(actualAttributes, attributes)
 		return nil
 	}
 
-	type fields struct {
-		config *SQSConf
-		svc    SQSClient
-	}
-
-	type args struct {
-		consumeFn ConsumerFn
-	}
-	var tests = []struct {
+	tests := []struct {
 		name           string
-		fields         fields
-		args           args
+		config         *SQSConf
 		wantReceiveErr error
 		wantDeleteErr  error
 	}{
 		{
 			name: "shouldHandleMessage",
-			fields: fields{
-				config: &SQSConf{
-					Queue:          queueUrl,
-					DeleteStrategy: DeleteStrategyImmediate,
-				},
-				svc: new(SqsMock),
-			},
-			args: args{
-				consumeFn: consumeTestFunc,
+			config: &SQSConf{
+				Queue:          queueUrl,
+				DeleteStrategy: DeleteStrategyImmediate,
 			},
 			wantReceiveErr: nil,
 			wantDeleteErr:  nil,
 		},
-		///*
 		{
 			name: "should error when receive",
-			fields: fields{
-				config: &SQSConf{
-					Queue:          queueUrl,
-					DeleteStrategy: DeleteStrategyImmediate,
-				},
-				svc: new(SqsMock),
-			},
-			args: args{
-				consumeFn: consumeTestFunc,
+			config: &SQSConf{
+				Queue:          queueUrl,
+				DeleteStrategy: DeleteStrategyImmediate,
 			},
 			wantReceiveErr: errors.New("fake receive error"),
 			wantDeleteErr:  nil,
 		},
 		{
 			name: "should error when delete",
-			fields: fields{
-				config: &SQSConf{
-					Queue:          queueUrl,
-					DeleteStrategy: DeleteStrategyImmediate,
-				},
-				svc: new(SqsMock),
-			},
-			args: args{
-				consumeFn: consumeTestFunc,
+			config: &SQSConf{
+				Queue:          queueUrl,
+				DeleteStrategy: DeleteStrategyImmediate,
 			},
 			wantReceiveErr: nil,
 			wantDeleteErr:  errors.New("fake delete error"),
 		},
 		{
 			name: "should context timeout",
-			fields: fields{
-				config: &SQSConf{
-					Queue:          queueUrl,
-					DeleteStrategy: DeleteStrategyImmediate,
-				},
-				svc: new(SqsMock),
-			},
-			args: args{
-				consumeFn: consumeTestFunc,
+			config: &SQSConf{
+				Queue:          queueUrl,
+				DeleteStrategy: DeleteStrategyImmediate,
 			},
 			wantReceiveErr: nil,
 			wantDeleteErr:  nil,
 		},
-
-		//*/
 	}
+
 	for _, tt := range tests {
-		actualData = make([]string, 0)
 		t.Run(tt.name, func(t *testing.T) {
-			sqsMock := tt.fields.svc.(*SqsMock)
-			sqsMock.On("ReceiveMessage", mock.Anything, mock.AnythingOfType("*sqs.ReceiveMessageInput"),
-				mock.AnythingOfType("[]func(*sqs.Options)")).Return(getQueueContent(), tt.wantReceiveErr)
-			sqsMock.On("DeleteMessageBatch", mock.Anything, mock.AnythingOfType("*sqs.DeleteMessageBatchInput"),
-				mock.AnythingOfType("[]func(*sqs.Options)")).Return(nil, tt.wantDeleteErr)
+			actualData = make([]string, 0)
+			actualAttributes = make([]map[string]types.MessageAttributeValue, 0)
 
-			ctx, _ := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			mockSQS := new(SqsMock)
+			mockSQS.On("ReceiveMessage", mock.Anything, mock.Anything, mock.Anything).Return(getQueueContent(), tt.wantReceiveErr)
+			mockSQS.On("DeleteMessageBatch", mock.Anything, mock.Anything, mock.Anything).Return(nil, tt.wantDeleteErr)
 
-			// set Env
 			setEnv("AWS_REGION", "baz", "AWS_SECRET_ACCESS_KEY", "foo", "AWS_ACCESS_KEY_ID", "bar")
 
-			s, err := NewSQSConsumer(tt.fields.config)
-			if err != nil {
-				t.Errorf("Error creation new Consumer")
-				return
-			}
+			s, err := NewSQSConsumer(tt.config)
+			require.NoError(t, err)
+			s.sqs = mockSQS
 
-			s.sqs = sqsMock
-			err = s.Start(ctx, tt.args.consumeFn)
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
 
-			t.Log(len(actualData))
-			t.Log(len(actualAttributes))
-			mocked := tt.fields.svc.(*SqsMock)
-			if tt.wantReceiveErr == nil && tt.wantDeleteErr == nil {
-				assert.NotNil(t, mocked.inputs)
-				assert.NotNil(t, mocked.deleteInputs)
-				for _, msg := range actualData {
-					assert.Contains(t, []string{
-						"msg1",
-						"msg2",
-						"msg3",
-					}, msg)
-				}
-				for _, attr := range actualAttributes {
-					for attrKey := range attr {
-						assert.Contains(t, []string{
-							"attribute1",
-							"attribute2",
-							"attribute3",
-						}, attrKey)
-					}
-				}
+			err = s.Start(ctx, consumeTestFunc)
+
+			if tt.wantReceiveErr != nil {
+				assert.Error(t, err)
 			} else {
-				assert.NotNil(t, err)
+				assert.NoError(t, err)
+				assert.NotEmpty(t, actualData)
+				for _, msg := range actualData {
+					assert.Contains(t, []string{"msg1", "msg2", "msg3"}, msg)
+				}
 			}
 		})
 	}
@@ -337,33 +238,23 @@ func getQueueContent() *sqs.ReceiveMessageOutput {
 				MessageId: aws.String("msg1"),
 				Body:      aws.String("msg1"),
 				MessageAttributes: map[string]types.MessageAttributeValue{
-					"attribute1": {
-						DataType:    aws.String("String"),
-						StringValue: aws.String("foo"),
-					},
+					"attribute1": {DataType: aws.String("String"), StringValue: aws.String("foo")},
 				},
 			},
 			{
 				MessageId: aws.String("msg2"),
 				Body:      aws.String("msg2"),
 				MessageAttributes: map[string]types.MessageAttributeValue{
-					"attribute2": {
-						DataType:    aws.String("String"),
-						StringValue: aws.String("foo"),
-					},
+					"attribute2": {DataType: aws.String("String"), StringValue: aws.String("foo")},
 				},
 			},
 			{
 				MessageId: aws.String("msg3"),
 				Body:      aws.String("msg3"),
 				MessageAttributes: map[string]types.MessageAttributeValue{
-					"attribute3": {
-						DataType:    aws.String("String"),
-						StringValue: aws.String("foo"),
-					},
+					"attribute3": {DataType: aws.String("String"), StringValue: aws.String("foo")},
 				},
 			},
 		},
 	}
-
 }

@@ -3,6 +3,7 @@ package consumer
 import (
 	"context"
 	"errors"
+
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
@@ -39,8 +40,9 @@ type SQSClient interface {
 }
 
 type SQS struct {
-	config *SQSConf
-	sqs    SQSClient
+	config    *SQSConf
+	sqs       SQSClient
+	semaphore chan struct{}
 }
 
 type ConsumerFn func(data []byte, attributes map[string]types.MessageAttributeValue) error
