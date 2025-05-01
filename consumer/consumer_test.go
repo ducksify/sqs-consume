@@ -13,7 +13,6 @@ import (
 	_ "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -114,7 +113,6 @@ func TestNewSQSWorker(t *testing.T) {
 					MaxNumberOfMessages: DefaultMaxNumberOfMessages,
 					WaitTimeSeconds:     DefaultWaitTimeSeconds,
 					DeleteStrategy:      DeleteStrategyImmediate,
-					LogLevel:            slog.LevelError,
 				},
 				sqs: svc,
 			},

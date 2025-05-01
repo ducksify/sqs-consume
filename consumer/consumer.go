@@ -37,15 +37,6 @@ func NewSQSConsumer(conf *SQSConf) (*SQS, error) {
 		return nil, ErrorSentinelConfigIsNil
 	}
 
-	if conf.LogLevel == nil {
-		conf.LogLevel = slog.LevelError
-	}
-	opts := &slog.HandlerOptions{
-		Level: conf.LogLevel,
-	}
-
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, opts)))
-
 	if conf.Queue == "" {
 		return nil, ErrorSentinelQueueNotSet
 	}

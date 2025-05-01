@@ -5,7 +5,6 @@ import (
 	"errors"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
-	"log/slog"
 )
 
 const (
@@ -32,7 +31,6 @@ type SQSConf struct {
 	VisibilityTimeout   int32
 	WaitTimeSeconds     int32
 	DeleteStrategy      DeleteStrategy
-	LogLevel            slog.Leveler
 }
 
 type SQSClient interface {
