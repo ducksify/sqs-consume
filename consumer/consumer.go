@@ -18,7 +18,7 @@ func NewSQSConsumer(conf *SQSConf) (*SQS, error) {
 
 	if os.Getenv("AWS_ACCESS_KEY_ID") == "" || os.Getenv("AWS_SECRET_ACCESS_KEY") == "" || os.Getenv("AWS_REGION") == "" {
 		slog.Error("One or more AWS environment variables are not set.")
-		return nil, SentinelErrorConfigAws
+		return nil, ErrorSentinelConfigAws
 	}
 	cred := credentials.NewStaticCredentialsProvider(os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY"), "")
 
@@ -29,16 +29,25 @@ func NewSQSConsumer(conf *SQSConf) (*SQS, error) {
 
 	if err != nil {
 		slog.Error("Error creation AWS configuration.")
-		return nil, SentinelErrorConfigAws
+		return nil, ErrorSentinelConfigAws
 	}
 	sqsClient := sqs.NewFromConfig(awsCfg)
 
 	if conf == nil {
-		return nil, SentinelErrorConfigIsNil
+		return nil, ErrorSentinelConfigIsNil
 	}
 
+	if conf.LogLevel == nil {
+		conf.LogLevel = slog.LevelError
+	}
+	opts := &slog.HandlerOptions{
+		Level: conf.LogLevel,
+	}
+
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, opts)))
+
 	if conf.Queue == "" {
-		return nil, SentinelErrorQueueNotSet
+		return nil, ErrorSentinelQueueNotSet
 	}
 
 	if len(conf.DeleteStrategy) == 0 {
@@ -107,10 +116,10 @@ func (s *SQS) handleMessages(ctx context.Context, consumeFn ConsumerFn) error {
 			toDelete := make([]types.Message, 0)
 			for _, msg := range result.Messages {
 				if err := consumeFn([]byte(*msg.Body), msg.MessageAttributes); err != nil {
-					slog.Error("error in consume function", slog.Any("error", err.Error()))
+					slog.Error("error in consume function", "error", err)
 					continue
 				}
-
+				slog.Debug("sqs message received", "message", *msg.Body)
 				if s.config.DeleteStrategy == DeleteStrategyOnSuccess {
 					toDelete = append(toDelete, msg)
 				}

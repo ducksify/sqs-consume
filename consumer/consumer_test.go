@@ -13,6 +13,7 @@ import (
 	_ "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -113,6 +114,7 @@ func TestNewSQSWorker(t *testing.T) {
 					MaxNumberOfMessages: DefaultMaxNumberOfMessages,
 					WaitTimeSeconds:     DefaultWaitTimeSeconds,
 					DeleteStrategy:      DeleteStrategyImmediate,
+					LogLevel:            slog.LevelError,
 				},
 				sqs: svc,
 			},
@@ -133,7 +135,7 @@ func TestNewSQSWorker(t *testing.T) {
 				sqs:    svc,
 			},
 
-			wantErr: SentinelErrorQueueNotSet,
+			wantErr: ErrorSentinelQueueNotSet,
 		},
 		{
 			name: "shouldErrorConfigNilNewSQSConsumer",
@@ -147,7 +149,7 @@ func TestNewSQSWorker(t *testing.T) {
 				sqs:    svc,
 			},
 
-			wantErr: SentinelErrorConfigIsNil,
+			wantErr: ErrorSentinelConfigIsNil,
 		},
 		{
 			name: "shouldErrorMissingEnv",
@@ -161,7 +163,7 @@ func TestNewSQSWorker(t *testing.T) {
 				sqs:    svc,
 			},
 
-			wantErr: SentinelErrorConfigAws,
+			wantErr: ErrorSentinelConfigAws,
 		},
 	}
 

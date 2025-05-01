@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"log/slog"
 )
 
 const (
@@ -17,9 +18,9 @@ const (
 )
 
 var (
-	SentinelErrorQueueNotSet = errors.New("queue not set")
-	SentinelErrorConfigIsNil = errors.New("configuration is nil")
-	SentinelErrorConfigAws   = errors.New("aws configuration error")
+	ErrorSentinelQueueNotSet = errors.New("queue not set")
+	ErrorSentinelConfigIsNil = errors.New("configuration is nil")
+	ErrorSentinelConfigAws   = errors.New("aws configuration error")
 )
 
 type DeleteStrategy string
@@ -31,6 +32,7 @@ type SQSConf struct {
 	VisibilityTimeout   int32
 	WaitTimeSeconds     int32
 	DeleteStrategy      DeleteStrategy
+	LogLevel            slog.Leveler
 }
 
 type SQSClient interface {
