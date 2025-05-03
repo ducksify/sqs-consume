@@ -27,10 +27,12 @@ type DeleteStrategy string
 type SQSConf struct {
 	Queue               string
 	Concurrency         int
+	rate                int // rate limiter per second
 	MaxNumberOfMessages int32
 	VisibilityTimeout   int32
 	WaitTimeSeconds     int32
 	DeleteStrategy      DeleteStrategy
+	BeforeConsumeFn     func(ctx context.Context) error
 }
 
 type SQSClient interface {

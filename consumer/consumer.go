@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -57,6 +58,10 @@ func NewSQSConsumer(conf *SQSConf) (*SQS, error) {
 		conf.MaxNumberOfMessages = DefaultMaxNumberOfMessages
 	}
 
+	limiter := rate.NewLimiter(rate.Every(5*time.Second), 1) // 5 calls/sec
+	conf.BeforeConsumeFn = func(ctx context.Context) error {
+		return limiter.Wait(ctx)
+	}
 	return &SQS{config: conf, sqs: sqsClient}, nil
 }
 
@@ -87,6 +92,11 @@ func (s *SQS) handleMessages(ctx context.Context, consumeFn ConsumerFn) error {
 		case <-ctx.Done():
 			return nil
 		default:
+			if s.config.BeforeConsumeFn != nil {
+				if err := s.config.BeforeConsumeFn(ctx); err != nil {
+					return err
+				}
+			}
 			result, err := s.sqs.ReceiveMessage(ctx, s.pullMessagesRequest())
 
 			if err != nil {
