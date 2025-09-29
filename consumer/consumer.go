@@ -58,7 +58,7 @@ func NewSQSConsumer(conf *SQSConf) (*SQS, error) {
 		conf.MaxNumberOfMessages = DefaultMaxNumberOfMessages
 	}
 
-	limiter := rate.NewLimiter(rate.Every(5*time.Second), 1) // 5 calls/sec
+	limiter := rate.NewLimiter(rate.Every(200*time.Millisecond), 1) // 5 calls/sec
 	conf.BeforeConsumeFn = func(ctx context.Context) error {
 		return limiter.Wait(ctx)
 	}
