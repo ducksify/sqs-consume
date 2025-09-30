@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -73,35 +74,42 @@ func (s *SQS) Start(ctx context.Context, consumeFn ConsumerFn) error {
 			return nil
 
 		default:
-			result, err := s.sqs.ReceiveMessage(ctx, s.pullMessagesRequest())
-			if err != nil {
-				return err
-			}
+			// Only poll SQS when we have semaphore capacity
+			if len(s.semaphore) < cap(s.semaphore) {
+				result, err := s.sqs.ReceiveMessage(ctx, s.pullMessagesRequest())
+				if err != nil {
+					return err
+				}
 
-			// Process messages concurrently with semaphore control
-			for _, msg := range result.Messages {
-				msgCopy := msg
+				// Process messages immediately if we have semaphore capacity
+				for _, msg := range result.Messages {
+					select {
+					case s.semaphore <- struct{}{}:
+						// Got a semaphore slot, process the message
+						go func(m types.Message) {
+							defer func() { <-s.semaphore }() // release the semaphore slot once done
 
-				// Try to acquire a semaphore slot (non-blocking)
+							if err := s.deleteSqsMessages(ctx, []types.Message{m}); err != nil {
+								slog.Error("failed to delete message", slog.Any("error", err.Error()))
+							}
+
+							consumeFn([]byte(*m.Body), m.MessageAttributes)
+						}(msg)
+					case <-ctx.Done():
+						return nil
+					default:
+						// Semaphore became full while processing, skip remaining messages
+						// They'll be picked up in the next polling cycle
+						slog.Debug("semaphore became full, skipping remaining messages", slog.Int("skipped", len(result.Messages)-1))
+						break
+					}
+				}
+			} else {
+				// Semaphore is full, wait a bit before checking again
 				select {
-				case s.semaphore <- struct{}{}:
-					// Got a slot, process the message
-					go func(m types.Message) {
-						defer func() { <-s.semaphore }() // release the semaphore slot once done
-
-						// Always run consumeFn and delete message regardless of success/failure
-						consumeFn([]byte(*m.Body), m.MessageAttributes)
-
-						// Delete the message after processing (regardless of consumeFn result)
-						if err := s.deleteSqsMessages(ctx, []types.Message{m}); err != nil {
-							slog.Error("failed to delete message", slog.Any("error", err.Error()))
-						}
-					}(msgCopy)
-				default:
-					// No semaphore slot available, skip this message for now
-					// It will be picked up in the next iteration
-					slog.Warn("semaphore full, skipping message", slog.String("messageId", *msgCopy.MessageId))
-					continue
+				case <-time.After(100 * time.Millisecond):
+				case <-ctx.Done():
+					return nil
 				}
 			}
 		}
