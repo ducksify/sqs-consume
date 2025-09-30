@@ -45,4 +45,11 @@ type SQS struct {
 	semaphore chan struct{}
 }
 
+// GetConcurrencyStats returns current concurrency statistics
+func (s *SQS) GetConcurrencyStats() (active, capacity int) {
+	active = len(s.semaphore)
+	capacity = cap(s.semaphore)
+	return active, capacity
+}
+
 type ConsumerFn func(data []byte, attributes map[string]types.MessageAttributeValue) error

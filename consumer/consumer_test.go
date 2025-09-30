@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -257,4 +258,225 @@ func getQueueContent() *sqs.ReceiveMessageOutput {
 			},
 		},
 	}
+}
+
+func TestSQS_ConcurrencyLimits(t *testing.T) {
+	// Test that concurrency limits are properly enforced
+	concurrency := 2
+	config := &SQSConf{
+		Queue:               "test-queue",
+		Concurrency:         concurrency,
+		MaxNumberOfMessages: 10,
+		DeleteStrategy:      DeleteStrategyImmediate,
+	}
+
+	setEnv("AWS_REGION", "us-east-1", "AWS_SECRET_ACCESS_KEY", "test", "AWS_ACCESS_KEY_ID", "test")
+
+	sqs, err := NewSQSConsumer(config)
+	require.NoError(t, err)
+
+	// Verify initial state
+	active, capacity := sqs.GetConcurrencyStats()
+	assert.Equal(t, 0, active)
+	assert.Equal(t, concurrency, capacity)
+
+	// Create a mock that returns many messages
+	mockSQS := new(SqsMock)
+	mockSQS.On("ReceiveMessage", mock.Anything, mock.Anything, mock.Anything).Return(getQueueContent(), nil)
+	mockSQS.On("DeleteMessageBatch", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil)
+
+	sqs.sqs = mockSQS
+
+	// Track concurrent executions
+	var concurrentCount int32
+	var maxConcurrent int32
+	processingStarted := make(chan struct{})
+
+	consumeFunc := func(data []byte, attributes map[string]types.MessageAttributeValue) error {
+		// Signal that processing has started
+		select {
+		case processingStarted <- struct{}{}:
+		default:
+		}
+
+		// Increment concurrent count
+		current := atomic.AddInt32(&concurrentCount, 1)
+		if current > atomic.LoadInt32(&maxConcurrent) {
+			atomic.StoreInt32(&maxConcurrent, current)
+		}
+
+		// Simulate processing time
+		time.Sleep(100 * time.Millisecond)
+
+		// Decrement concurrent count
+		atomic.AddInt32(&concurrentCount, -1)
+
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	// Start the consumer in a goroutine
+	go func() {
+		sqs.Start(ctx, consumeFunc)
+	}()
+
+	// Wait for some processing to start
+	select {
+	case <-processingStarted:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("No processing started within timeout")
+	}
+
+	// Wait a bit for concurrent processing
+	time.Sleep(200 * time.Millisecond)
+
+	// Check that we don't exceed the concurrency limit
+	finalMaxConcurrent := atomic.LoadInt32(&maxConcurrent)
+	assert.LessOrEqual(t, finalMaxConcurrent, int32(concurrency),
+		"Concurrent processing exceeded limit: %d > %d", finalMaxConcurrent, concurrency)
+
+	// Verify semaphore stats
+	active, capacity = sqs.GetConcurrencyStats()
+	assert.LessOrEqual(t, active, concurrency)
+	assert.Equal(t, concurrency, capacity)
+}
+
+func TestSQS_ConcurrencyStats(t *testing.T) {
+	config := &SQSConf{
+		Queue:       "test-queue",
+		Concurrency: 3,
+	}
+
+	setEnv("AWS_REGION", "us-east-1", "AWS_SECRET_ACCESS_KEY", "test", "AWS_ACCESS_KEY_ID", "test")
+
+	sqs, err := NewSQSConsumer(config)
+	require.NoError(t, err)
+
+	// Test initial stats
+	active, capacity := sqs.GetConcurrencyStats()
+	assert.Equal(t, 0, active)
+	assert.Equal(t, 3, capacity)
+
+	// Manually acquire semaphore slots to test stats
+	sqs.semaphore <- struct{}{}
+	active, capacity = sqs.GetConcurrencyStats()
+	assert.Equal(t, 1, active)
+	assert.Equal(t, 3, capacity)
+
+	sqs.semaphore <- struct{}{}
+	active, capacity = sqs.GetConcurrencyStats()
+	assert.Equal(t, 2, active)
+	assert.Equal(t, 3, capacity)
+
+	// Release slots
+	<-sqs.semaphore
+	<-sqs.semaphore
+	active, capacity = sqs.GetConcurrencyStats()
+	assert.Equal(t, 0, active)
+	assert.Equal(t, 3, capacity)
+}
+
+func TestSQS_HighConcurrency(t *testing.T) {
+	// Test with high concurrency setting (150)
+	concurrency := 150
+	config := &SQSConf{
+		Queue:               "test-queue",
+		Concurrency:         concurrency,
+		MaxNumberOfMessages: 10,
+		DeleteStrategy:      DeleteStrategyImmediate,
+	}
+
+	setEnv("AWS_REGION", "us-east-1", "AWS_SECRET_ACCESS_KEY", "test", "AWS_ACCESS_KEY_ID", "test")
+
+	sqs, err := NewSQSConsumer(config)
+	require.NoError(t, err)
+
+	// Verify initial state
+	active, capacity := sqs.GetConcurrencyStats()
+	assert.Equal(t, 0, active)
+	assert.Equal(t, concurrency, capacity)
+
+	// Test that we can acquire many semaphore slots
+	acquiredSlots := make([]struct{}, 0, concurrency)
+	for i := 0; i < concurrency; i++ {
+		select {
+		case sqs.semaphore <- struct{}{}:
+			acquiredSlots = append(acquiredSlots, struct{}{})
+		default:
+			t.Fatalf("Failed to acquire semaphore slot %d", i)
+		}
+	}
+
+	// Verify all slots are acquired
+	active, capacity = sqs.GetConcurrencyStats()
+	assert.Equal(t, concurrency, active)
+	assert.Equal(t, concurrency, capacity)
+
+	// Test that we cannot acquire more slots
+	select {
+	case sqs.semaphore <- struct{}{}:
+		t.Fatal("Should not be able to acquire more semaphore slots")
+	default:
+		// This is expected - no more slots available
+	}
+
+	// Release all slots
+	for range acquiredSlots {
+		<-sqs.semaphore
+	}
+
+	// Verify all slots are released
+	active, capacity = sqs.GetConcurrencyStats()
+	assert.Equal(t, 0, active)
+	assert.Equal(t, concurrency, capacity)
+}
+
+func TestSQS_VeryHighConcurrency(t *testing.T) {
+	// Test with very high concurrency setting (1000)
+	concurrency := 1000
+	config := &SQSConf{
+		Queue:               "test-queue",
+		Concurrency:         concurrency,
+		MaxNumberOfMessages: 10,
+		DeleteStrategy:      DeleteStrategyImmediate,
+	}
+
+	setEnv("AWS_REGION", "us-east-1", "AWS_SECRET_ACCESS_KEY", "test", "AWS_ACCESS_KEY_ID", "test")
+
+	sqs, err := NewSQSConsumer(config)
+	require.NoError(t, err)
+
+	// Verify initial state
+	active, capacity := sqs.GetConcurrencyStats()
+	assert.Equal(t, 0, active)
+	assert.Equal(t, concurrency, capacity)
+
+	// Test that we can acquire many semaphore slots (test first 100 to avoid long test times)
+	testSlots := 100
+	acquiredSlots := make([]struct{}, 0, testSlots)
+	for i := 0; i < testSlots; i++ {
+		select {
+		case sqs.semaphore <- struct{}{}:
+			acquiredSlots = append(acquiredSlots, struct{}{})
+		default:
+			t.Fatalf("Failed to acquire semaphore slot %d", i)
+		}
+	}
+
+	// Verify slots are acquired
+	active, capacity = sqs.GetConcurrencyStats()
+	assert.Equal(t, testSlots, active)
+	assert.Equal(t, concurrency, capacity)
+
+	// Release all slots
+	for range acquiredSlots {
+		<-sqs.semaphore
+	}
+
+	// Verify all slots are released
+	active, capacity = sqs.GetConcurrencyStats()
+	assert.Equal(t, 0, active)
+	assert.Equal(t, concurrency, capacity)
 }

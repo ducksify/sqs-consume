@@ -87,27 +87,35 @@ func (s *SQS) Start(ctx context.Context, consumeFn ConsumerFn) error {
 				continue
 			}
 
+			// Process messages concurrently with semaphore control
 			for _, msg := range result.Messages {
 				msgCopy := msg
 
-				// Acquire a semaphore slot
-				s.semaphore <- struct{}{}
+				// Try to acquire a semaphore slot (non-blocking)
+				select {
+				case s.semaphore <- struct{}{}:
+					// Got a slot, process the message
+					go func(m types.Message) {
+						defer func() { <-s.semaphore }() // release the semaphore slot once done
 
-				go func(m types.Message) {
-					defer func() { <-s.semaphore }() // release the semaphore slot once done
-
-					err := consumeFn([]byte(*m.Body), m.MessageAttributes)
-					if err != nil {
-						slog.Error("error in consume function", slog.Any("error", err.Error()))
-						return
-					}
-
-					if s.config.DeleteStrategy == DeleteStrategyOnSuccess {
-						if err := s.deleteSqsMessages(ctx, []types.Message{m}); err != nil {
-							slog.Error("failed to delete message", slog.Any("error", err.Error()))
+						err := consumeFn([]byte(*m.Body), m.MessageAttributes)
+						if err != nil {
+							slog.Error("error in consume function", slog.Any("error", err.Error()))
+							return
 						}
-					}
-				}(msgCopy)
+
+						if s.config.DeleteStrategy == DeleteStrategyOnSuccess {
+							if err := s.deleteSqsMessages(ctx, []types.Message{m}); err != nil {
+								slog.Error("failed to delete message", slog.Any("error", err.Error()))
+							}
+						}
+					}(msgCopy)
+				default:
+					// No semaphore slot available, skip this message for now
+					// It will be picked up in the next iteration
+					slog.Warn("semaphore full, skipping message", slog.String("messageId", *msgCopy.MessageId))
+					continue
+				}
 			}
 
 			if s.config.DeleteStrategy == DeleteStrategyImmediate {
