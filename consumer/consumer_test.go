@@ -163,7 +163,8 @@ func TestSQS_Start(t *testing.T) {
 		{
 			name: "shouldHandleMessage",
 			config: &SQSConf{
-				Queue: queueUrl,
+				Queue:       queueUrl,
+				Concurrency: 10,
 			},
 			wantReceiveErr: nil,
 			wantDeleteErr:  nil,
@@ -171,7 +172,8 @@ func TestSQS_Start(t *testing.T) {
 		{
 			name: "should error when receive",
 			config: &SQSConf{
-				Queue: queueUrl,
+				Queue:       queueUrl,
+				Concurrency: 10,
 			},
 			wantReceiveErr: errors.New("fake receive error"),
 			wantDeleteErr:  nil,
@@ -179,7 +181,8 @@ func TestSQS_Start(t *testing.T) {
 		{
 			name: "should error when delete",
 			config: &SQSConf{
-				Queue: queueUrl,
+				Queue:       queueUrl,
+				Concurrency: 10,
 			},
 			wantReceiveErr: nil,
 			wantDeleteErr:  errors.New("fake delete error"),
@@ -187,7 +190,8 @@ func TestSQS_Start(t *testing.T) {
 		{
 			name: "should context timeout",
 			config: &SQSConf{
-				Queue: queueUrl,
+				Queue:       queueUrl,
+				Concurrency: 10,
 			},
 			wantReceiveErr: nil,
 			wantDeleteErr:  nil,
@@ -256,8 +260,8 @@ func getQueueContent() *sqs.ReceiveMessageOutput {
 }
 
 func TestSQS_ConcurrencyLimits(t *testing.T) {
-	// Test that concurrency limits are properly enforced
-	concurrency := 2
+	// Test that concurrency limits are properly enforced (requires at least 10 slots to poll)
+	concurrency := 10
 	config := &SQSConf{
 		Queue:               "test-queue",
 		Concurrency:         concurrency,
