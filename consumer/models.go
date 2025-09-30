@@ -12,9 +12,6 @@ const (
 	DefaultMaxNumberOfMessages = int32(10)
 	DefaultWaitTimeSeconds     = int32(5)
 	DefaultConcurrency         = 5
-
-	DeleteStrategyImmediate = DeleteStrategy("IMMEDIATE")
-	DeleteStrategyOnSuccess = DeleteStrategy("ON_SUCCESS")
 )
 
 var (
@@ -23,15 +20,12 @@ var (
 	SentinelErrorConfigAws   = errors.New("aws configuration error")
 )
 
-type DeleteStrategy string
-
 type SQSConf struct {
 	Queue               string
 	Concurrency         int
 	MaxNumberOfMessages int32
 	VisibilityTimeout   int32
 	WaitTimeSeconds     int32
-	DeleteStrategy      DeleteStrategy
 }
 
 type SQSClient interface {

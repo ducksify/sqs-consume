@@ -98,7 +98,6 @@ func TestNewSQSWorker(t *testing.T) {
 					Concurrency:         DefaultConcurrency,
 					MaxNumberOfMessages: DefaultMaxNumberOfMessages,
 					WaitTimeSeconds:     DefaultWaitTimeSeconds,
-					DeleteStrategy:      DeleteStrategyImmediate,
 				},
 				sqs:       svc,
 				semaphore: make(chan struct{}, DefaultConcurrency),
@@ -164,8 +163,7 @@ func TestSQS_Start(t *testing.T) {
 		{
 			name: "shouldHandleMessage",
 			config: &SQSConf{
-				Queue:          queueUrl,
-				DeleteStrategy: DeleteStrategyImmediate,
+				Queue: queueUrl,
 			},
 			wantReceiveErr: nil,
 			wantDeleteErr:  nil,
@@ -173,8 +171,7 @@ func TestSQS_Start(t *testing.T) {
 		{
 			name: "should error when receive",
 			config: &SQSConf{
-				Queue:          queueUrl,
-				DeleteStrategy: DeleteStrategyImmediate,
+				Queue: queueUrl,
 			},
 			wantReceiveErr: errors.New("fake receive error"),
 			wantDeleteErr:  nil,
@@ -182,8 +179,7 @@ func TestSQS_Start(t *testing.T) {
 		{
 			name: "should error when delete",
 			config: &SQSConf{
-				Queue:          queueUrl,
-				DeleteStrategy: DeleteStrategyImmediate,
+				Queue: queueUrl,
 			},
 			wantReceiveErr: nil,
 			wantDeleteErr:  errors.New("fake delete error"),
@@ -191,8 +187,7 @@ func TestSQS_Start(t *testing.T) {
 		{
 			name: "should context timeout",
 			config: &SQSConf{
-				Queue:          queueUrl,
-				DeleteStrategy: DeleteStrategyImmediate,
+				Queue: queueUrl,
 			},
 			wantReceiveErr: nil,
 			wantDeleteErr:  nil,
@@ -267,7 +262,6 @@ func TestSQS_ConcurrencyLimits(t *testing.T) {
 		Queue:               "test-queue",
 		Concurrency:         concurrency,
 		MaxNumberOfMessages: 10,
-		DeleteStrategy:      DeleteStrategyImmediate,
 	}
 
 	setEnv("AWS_REGION", "us-east-1", "AWS_SECRET_ACCESS_KEY", "test", "AWS_ACCESS_KEY_ID", "test")
@@ -385,7 +379,6 @@ func TestSQS_HighConcurrency(t *testing.T) {
 		Queue:               "test-queue",
 		Concurrency:         concurrency,
 		MaxNumberOfMessages: 10,
-		DeleteStrategy:      DeleteStrategyImmediate,
 	}
 
 	setEnv("AWS_REGION", "us-east-1", "AWS_SECRET_ACCESS_KEY", "test", "AWS_ACCESS_KEY_ID", "test")
@@ -440,7 +433,6 @@ func TestSQS_VeryHighConcurrency(t *testing.T) {
 		Queue:               "test-queue",
 		Concurrency:         concurrency,
 		MaxNumberOfMessages: 10,
-		DeleteStrategy:      DeleteStrategyImmediate,
 	}
 
 	setEnv("AWS_REGION", "us-east-1", "AWS_SECRET_ACCESS_KEY", "test", "AWS_ACCESS_KEY_ID", "test")

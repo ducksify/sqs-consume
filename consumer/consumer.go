@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -39,9 +38,6 @@ func NewSQSConsumer(conf *SQSConf) (*SQS, error) {
 		return nil, SentinelErrorQueueNotSet
 	}
 
-	if len(conf.DeleteStrategy) == 0 {
-		conf.DeleteStrategy = DeleteStrategyImmediate
-	}
 	if conf.Concurrency == 0 {
 		conf.Concurrency = DefaultConcurrency
 	}
@@ -82,11 +78,6 @@ func (s *SQS) Start(ctx context.Context, consumeFn ConsumerFn) error {
 				return err
 			}
 
-			if len(result.Messages) == 0 {
-				time.Sleep(1 * time.Second)
-				continue
-			}
-
 			// Process messages concurrently with semaphore control
 			for _, msg := range result.Messages {
 				msgCopy := msg
@@ -98,16 +89,12 @@ func (s *SQS) Start(ctx context.Context, consumeFn ConsumerFn) error {
 					go func(m types.Message) {
 						defer func() { <-s.semaphore }() // release the semaphore slot once done
 
-						err := consumeFn([]byte(*m.Body), m.MessageAttributes)
-						if err != nil {
-							slog.Error("error in consume function", slog.Any("error", err.Error()))
-							return
-						}
+						// Always run consumeFn and delete message regardless of success/failure
+						consumeFn([]byte(*m.Body), m.MessageAttributes)
 
-						if s.config.DeleteStrategy == DeleteStrategyOnSuccess {
-							if err := s.deleteSqsMessages(ctx, []types.Message{m}); err != nil {
-								slog.Error("failed to delete message", slog.Any("error", err.Error()))
-							}
+						// Delete the message after processing (regardless of consumeFn result)
+						if err := s.deleteSqsMessages(ctx, []types.Message{m}); err != nil {
+							slog.Error("failed to delete message", slog.Any("error", err.Error()))
 						}
 					}(msgCopy)
 				default:
@@ -115,12 +102,6 @@ func (s *SQS) Start(ctx context.Context, consumeFn ConsumerFn) error {
 					// It will be picked up in the next iteration
 					slog.Warn("semaphore full, skipping message", slog.String("messageId", *msgCopy.MessageId))
 					continue
-				}
-			}
-
-			if s.config.DeleteStrategy == DeleteStrategyImmediate {
-				if err := s.deleteSqsMessages(ctx, result.Messages); err != nil {
-					slog.Error("failed to delete messages", slog.Any("error", err.Error()))
 				}
 			}
 		}
