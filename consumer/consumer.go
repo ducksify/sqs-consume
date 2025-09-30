@@ -103,7 +103,7 @@ func (s *SQS) Start(ctx context.Context, consumeFn ConsumerFn) error {
 					}
 				}
 			} else {
-				slog.Info("Semaphore is full, waiting for 100ms before checking again, available slots : ", slog.Int("availableSlots", availableSlots))
+				slog.Debug("Semaphore is full, waiting for 100ms before checking again, available slots : ", slog.Int("availableSlots", availableSlots))
 				select {
 				case <-time.After(100 * time.Millisecond):
 				case <-ctx.Done():
