@@ -75,17 +75,18 @@ func (s *SQS) Start(ctx context.Context, consumeFn ConsumerFn) error {
 
 		default:
 			// Only poll SQS when we have semaphore capacity
-			if len(s.semaphore) < cap(s.semaphore) {
+			availableSlots := cap(s.semaphore) - len(s.semaphore)
+			if availableSlots >= 10 {
+				slog.Info("Polling messages from SQS, available slots : ", slog.Int("availableSlots", availableSlots))
 				result, err := s.sqs.ReceiveMessage(ctx, s.pullMessagesRequest())
 				if err != nil {
 					return err
 				}
+				slog.Info("Received messages from SQS : ", slog.Int("messages", len(result.Messages)))
 
-				// Process messages immediately if we have semaphore capacity
 				for _, msg := range result.Messages {
 					select {
 					case s.semaphore <- struct{}{}:
-						// Got a semaphore slot, process the message
 						go func(m types.Message) {
 							defer func() { <-s.semaphore }() // release the semaphore slot once done
 
@@ -98,14 +99,11 @@ func (s *SQS) Start(ctx context.Context, consumeFn ConsumerFn) error {
 					case <-ctx.Done():
 						return nil
 					default:
-						// Semaphore became full while processing, skip remaining messages
-						// They'll be picked up in the next polling cycle
-						slog.Debug("semaphore became full, skipping remaining messages", slog.Int("skipped", len(result.Messages)-1))
-						break
+						slog.Warn("SHOULD NOT HAPPEN ! semaphore became full, skipping remaining messages", slog.Int("skipped", len(result.Messages)-1))
 					}
 				}
 			} else {
-				// Semaphore is full, wait a bit before checking again
+				slog.Info("Semaphore is full, waiting for 100ms before checking again, available slots : ", slog.Int("availableSlots", availableSlots))
 				select {
 				case <-time.After(100 * time.Millisecond):
 				case <-ctx.Done():
