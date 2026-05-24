@@ -37,6 +37,7 @@ type SQS struct {
 	config    *SQSConf
 	sqs       SQSClient
 	semaphore chan struct{}
+	slotFree  chan struct{} // signals when a handler releases a slot
 }
 
 // GetConcurrencyStats returns current concurrency statistics
