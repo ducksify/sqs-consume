@@ -74,11 +74,10 @@ func (s *SQS) Start(ctx context.Context, consumeFn ConsumerFn) error {
 			return nil
 
 		default:
-			// Only poll SQS when we have semaphore capacity
 			availableSlots := cap(s.semaphore) - len(s.semaphore)
-			if availableSlots >= 10 {
+			if availableSlots > 0 {
 				slog.Info("Polling messages from SQS, available slots : ", slog.Int("availableSlots", availableSlots))
-				result, err := s.sqs.ReceiveMessage(ctx, s.pullMessagesRequest())
+				result, err := s.sqs.ReceiveMessage(ctx, s.pullMessagesRequest(availableSlots))
 				if err != nil {
 					return err
 				}
@@ -114,12 +113,16 @@ func (s *SQS) Start(ctx context.Context, consumeFn ConsumerFn) error {
 	}
 }
 
-func (s *SQS) pullMessagesRequest() *sqs.ReceiveMessageInput {
+func (s *SQS) pullMessagesRequest(availableSlots int) *sqs.ReceiveMessageInput {
+	maxMessages := s.config.MaxNumberOfMessages
+	if slots := int32(availableSlots); slots < maxMessages {
+		maxMessages = slots
+	}
 	return &sqs.ReceiveMessageInput{
 		MessageSystemAttributeNames: []types.MessageSystemAttributeName{types.MessageSystemAttributeNameAll},
 		MessageAttributeNames:       []string{"All"},
 		QueueUrl:                    aws.String(s.config.Queue),
-		MaxNumberOfMessages:         s.config.MaxNumberOfMessages,
+		MaxNumberOfMessages:         maxMessages,
 		VisibilityTimeout:           s.config.VisibilityTimeout,
 		WaitTimeSeconds:             s.config.WaitTimeSeconds,
 	}
