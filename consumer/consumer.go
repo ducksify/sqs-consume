@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -52,8 +51,17 @@ func NewSQSConsumer(conf *SQSConf) (*SQS, error) {
 	return &SQS{
 		config:    conf,
 		sqs:       sqsClient,
-		semaphore: make(chan struct{}, conf.Concurrency), // create the semaphore
+		semaphore: make(chan struct{}, conf.Concurrency),
+		slotFree:  make(chan struct{}, 1),
 	}, nil
+}
+
+func (s *SQS) releaseSlot() {
+	<-s.semaphore
+	select {
+	case s.slotFree <- struct{}{}:
+	default:
+	}
 }
 
 func (s *SQS) Start(ctx context.Context, consumeFn ConsumerFn) error {
@@ -87,7 +95,7 @@ func (s *SQS) Start(ctx context.Context, consumeFn ConsumerFn) error {
 					select {
 					case s.semaphore <- struct{}{}:
 						go func(m types.Message) {
-							defer func() { <-s.semaphore }() // release the semaphore slot once done
+							defer s.releaseSlot()
 
 							if err := s.deleteSqsMessages(ctx, []types.Message{m}); err != nil {
 								slog.Error("failed to delete message", slog.Any("error", err.Error()))
@@ -102,9 +110,8 @@ func (s *SQS) Start(ctx context.Context, consumeFn ConsumerFn) error {
 					}
 				}
 			} else {
-				slog.Debug("Semaphore is full, waiting for 100ms before checking again, available slots : ", slog.Int("availableSlots", availableSlots))
 				select {
-				case <-time.After(100 * time.Millisecond):
+				case <-s.slotFree:
 				case <-ctx.Done():
 					return nil
 				}
